@@ -1,0 +1,405 @@
+---
+title: "Assignment 11 CodeBase: Personalized Recommender System"
+author: "Muhammad Suffyan Khan"
+format: html
+editor: visual
+date: "04/26/2026"
+---
+
+```{r setup}
+knitr::opts_chunk$set(message = FALSE, warning = FALSE)
+```
+
+# Approach Summary
+
+This assignment builds a personalized recommender system using the same survey-based movie rating dataset from the previous assignment. Unlike the Global Baseline Estimate model, which produced non-personalized recommendations, this model uses item-to-item collaborative filtering to generate user-specific recommendations.
+
+The recommender calculates similarity between movies based on user rating patterns and predicts ratings for unseen movies using weighted averages of similar items.
+
+The model outputs a ranked Top-3 list of recommended movies for each user. Performance is evaluated using a hold-out validation approach with RMSE and MAE metrics.
+
+Additional visualizations are included to support data understanding and model evaluation.
+
+# Objective
+
+The objective of this assignment is to build a personalized movie recommendation system using the same survey rating data from the previous Global Baseline Estimate assignment. Unlike the previous baseline model, this assignment uses item-to-item collaborative filtering to generate personalized recommendations based on each user's rating history.
+
+The recommender will output ranked Top-3 movie recommendations for each user and evaluate prediction performance using a hold-out test set with RMSE and MAE.
+
+# Loading Libraries
+
+```{r libraries}
+library(DBI)
+library(RPostgres)
+library(dplyr)
+library(tidyr)
+library(tibble)
+library(purrr)
+library(ggplot2)
+library(knitr)
+```
+
+# Connect to PostgreSQL
+
+The PostgreSQL database used in this assignment was created in the previous Global Estimate assignment. The schema file is included in the GitHub repository for reproducibility, but the database is not recreated in this codebase.
+
+```{r connect-db}
+con <- dbConnect(
+  RPostgres::Postgres(),
+  host = "localhost",
+  port = 5432,
+  dbname = "Movie _Ratings",
+  user = "postgres",
+  password = Sys.getenv("PGPASSWORD")
+)
+
+dbListTables(con)
+```
+
+# Load Tables into R
+
+```{r load-tables}
+users_df <- dbGetQuery(con, "SELECT * FROM users;")
+movies_df <- dbGetQuery(con, "SELECT * FROM movies;")
+ratings_df <- dbGetQuery(con, "SELECT * FROM ratings;")
+```
+
+# Basic Sanity Checks
+
+```{r sanity-checks}
+glimpse(users_df)
+glimpse(movies_df)
+glimpse(ratings_df)
+```
+
+# Prepare Clean Ratings Data
+
+```{r clean-ratings}
+ratings_clean <- ratings_df %>%
+  select(user_id, movie_id, rating) %>%
+  mutate(rating = as.numeric(rating)) %>%
+  filter(!is.na(rating))
+
+ratings_joined <- ratings_clean %>%
+  left_join(users_df, by = "user_id") %>%
+  left_join(movies_df, by = "movie_id") %>%
+  select(user_id, name, movie_id, title, release_year, rating) %>%
+  arrange(name, title)
+
+ratings_joined
+```
+
+This step prepares a clean ratings dataset and joins the relational tables so that user names and movie titles are visible in the analysis.
+
+# Validate Rating Scale
+
+```{r validate-ratings}
+ratings_clean %>%
+  summarise(
+    total_ratings = n(),
+    min_rating = min(rating),
+    max_rating = max(rating),
+    average_rating = mean(rating),
+    missing_ratings = sum(is.na(rating))
+  )
+```
+
+The validation confirms that the rating values are numeric and fall within the expected 1 to 5 survey scale.
+
+# Rating Distribution Visualization
+
+```{r rating-distribution}
+ggplot(ratings_clean, aes(x = factor(rating))) +
+  geom_bar() +
+  labs(
+    title = "Distribution of Movie Ratings",
+    x = "Rating",
+    y = "Count"
+  )
+```
+
+This plot shows how frequently each rating value appears in the dataset. It provides useful context before building the recommender.
+
+# Create Training and Testing Sets
+
+```{r train-test-split}
+set.seed(607)
+
+ratings_split <- ratings_clean %>%
+  mutate(row_id = row_number())
+
+test_ids <- sample(
+  ratings_split$row_id,
+  size = ceiling(0.20 * nrow(ratings_split))
+)
+
+train_ratings <- ratings_split %>%
+  filter(!row_id %in% test_ids) %>%
+  select(-row_id)
+
+test_ratings <- ratings_split %>%
+  filter(row_id %in% test_ids) %>%
+  select(-row_id)
+
+nrow(train_ratings)
+nrow(test_ratings)
+```
+
+A hold-out validation method is used. The model is trained on 80% of the observed ratings and evaluated on the remaining 20%.
+
+# Create User-Movie Rating Matrix
+
+```{r user-movie-matrix}
+rating_matrix <- train_ratings %>%
+  left_join(movies_df, by = "movie_id") %>%
+  select(user_id, title, rating) %>%
+  pivot_wider(
+    names_from = title,
+    values_from = rating
+  ) %>%
+  column_to_rownames("user_id") %>%
+  as.matrix()
+
+rating_matrix
+```
+
+The rating matrix stores users as rows and movies as columns. Missing values represent movies that a user did not rate in the training data.
+
+# Item-to-Item Similarity Function
+
+```{r similarity-function}
+cosine_similarity <- function(x, y) {
+  common <- !is.na(x) & !is.na(y)
+  
+  if (sum(common) < 2) {
+    return(NA_real_)
+  }
+  
+  numerator <- sum(x[common] * y[common])
+  denominator <- sqrt(sum(x[common]^2)) * sqrt(sum(y[common]^2))
+  
+  if (denominator == 0) {
+    return(NA_real_)
+  }
+  
+  numerator / denominator
+}
+```
+
+Cosine similarity is used to measure how similar two movies are based on rating patterns from users who rated both movies.
+
+# Calculate Item-to-Item Similarity Matrix
+
+```{r item-similarity-matrix}
+movie_names <- colnames(rating_matrix)
+
+item_similarity <- matrix(
+  NA_real_,
+  nrow = length(movie_names),
+  ncol = length(movie_names),
+  dimnames = list(movie_names, movie_names)
+)
+
+for (i in seq_along(movie_names)) {
+  for (j in seq_along(movie_names)) {
+    if (i == j) {
+      item_similarity[i, j] <- 1
+    } else {
+      item_similarity[i, j] <- cosine_similarity(
+        rating_matrix[, i],
+        rating_matrix[, j]
+      )
+    }
+  }
+}
+
+item_similarity
+```
+
+This matrix shows the similarity between each pair of movies. Higher values indicate stronger similarity in user rating behavior.
+
+# Prediction Function
+
+```{r prediction-function}
+global_mean <- mean(train_ratings$rating, na.rm = TRUE)
+
+predict_item_cf <- function(user_id_value, movie_id_value, rating_matrix, item_similarity, movies_df, global_mean) {
+  
+  target_movie <- movies_df %>%
+    filter(movie_id == movie_id_value) %>%
+    pull(title)
+  
+  if (length(target_movie) == 0 || !(target_movie %in% colnames(rating_matrix))) {
+    return(global_mean)
+  }
+  
+  user_key <- as.character(user_id_value)
+  
+  if (!(user_key %in% rownames(rating_matrix))) {
+    return(global_mean)
+  }
+  
+  user_ratings <- rating_matrix[user_key, ]
+  rated_movies <- names(user_ratings)[!is.na(user_ratings)]
+  
+  if (length(rated_movies) == 0) {
+    return(global_mean)
+  }
+  
+  similarities <- item_similarity[target_movie, rated_movies]
+  valid <- !is.na(similarities) & similarities > 0
+  
+  if (sum(valid) == 0) {
+    return(global_mean)
+  }
+  
+  predicted <- sum(similarities[valid] * user_ratings[rated_movies][valid]) /
+    sum(abs(similarities[valid]))
+  
+  predicted <- max(min(predicted, 5), 1)
+  
+  predicted
+}
+```
+
+The function predicts how a user may rate a target movie by using a weighted average of the user's ratings for similar movies.
+
+# Predict Ratings for Test Set
+
+```{r test-predictions}
+test_predictions <- test_ratings %>%
+  rowwise() %>%
+  mutate(
+    predicted_rating = predict_item_cf(
+      user_id,
+      movie_id,
+      rating_matrix,
+      item_similarity,
+      movies_df,
+      global_mean
+    )
+  ) %>%
+  ungroup() %>%
+  left_join(users_df, by = "user_id") %>%
+  left_join(movies_df, by = "movie_id") %>%
+  select(name, title, actual_rating = rating, predicted_rating)
+
+test_predictions
+```
+
+This table compares the held-out actual ratings with the recommender's predicted ratings.
+
+# Model Evaluation
+
+```{r evaluation}
+evaluation_metrics <- test_predictions %>%
+  summarise(
+    RMSE = sqrt(mean((actual_rating - predicted_rating)^2, na.rm = TRUE)),
+    MAE = mean(abs(actual_rating - predicted_rating), na.rm = TRUE)
+  )
+
+evaluation_metrics
+```
+
+RMSE and MAE measure how close the predicted ratings are to the actual ratings in the test set.
+
+# Predicted vs Actual Ratings Visualization
+
+```{r predicted-vs-actual}
+ggplot(test_predictions, aes(x = actual_rating, y = predicted_rating)) +
+  geom_point(size = 3) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed") +
+  labs(
+    title = "Predicted vs Actual Ratings on Test Set",
+    x = "Actual Rating",
+    y = "Predicted Rating"
+  )
+```
+
+Points closer to the dashed line represent more accurate predictions. This plot visually supports the RMSE and MAE evaluation results.
+
+# Generate All User-Movie Candidate Pairs
+
+```{r candidate-pairs}
+all_pairs <- users_df %>%
+  select(user_id, name) %>%
+  crossing(movies_df %>% select(movie_id, title, release_year)) %>%
+  left_join(ratings_clean, by = c("user_id", "movie_id"))
+
+recommendation_candidates <- all_pairs %>%
+  filter(is.na(rating))
+```
+
+Only movies that a user has not already rated are considered as recommendation candidates.
+
+# Generate Top-3 Personalized Recommendations
+
+```{r top-recommendations}
+top_n <- 3
+
+recommendations_all <- recommendation_candidates %>%
+  rowwise() %>%
+  mutate(
+    predicted_rating = predict_item_cf(
+      user_id,
+      movie_id,
+      rating_matrix,
+      item_similarity,
+      movies_df,
+      global_mean
+    )
+  ) %>%
+  ungroup() %>%
+  group_by(user_id, name) %>%
+  arrange(desc(predicted_rating), title, .by_group = TRUE) %>%
+  mutate(recommendation_rank = row_number()) %>%
+  slice_head(n = top_n) %>%
+  ungroup() %>%
+  select(
+    name,
+    recommendation_rank,
+    title,
+    release_year,
+    predicted_rating
+  )
+
+recommendations_all
+```
+
+The table above contains the Top-3 personalized movie recommendations for each user. These recommendations are personalized because the predicted ratings depend on each user's previously observed ratings and movie-to-movie similarity patterns.
+
+# Top Recommendations Visualization
+
+```{r recommendation-plot}
+recommendations_all %>%
+  ggplot(aes(x = reorder(title, predicted_rating), y = predicted_rating)) +
+  geom_col() +
+  coord_flip() +
+  facet_wrap(~ name) +
+  labs(
+    title = "Top-3 Personalized Movie Recommendations by User",
+    x = "Recommended Movie",
+    y = "Predicted Rating"
+  )
+```
+
+This chart visually summarizes the personalized recommendation output for each user.
+
+# Discussion
+
+The item-to-item collaborative filtering recommender generates personalized movie recommendations by comparing movies based on rating patterns. Unlike the previous Global Baseline Estimate model, which mainly depended on overall averages and bias terms, this approach uses a user's own rating history to predict how they may respond to unseen movies.
+
+The hold-out evaluation provides a direct way to compare predicted ratings with actual ratings. Because the dataset is small and sparse, the evaluation metrics should be interpreted carefully. A small number of test cases can make RMSE and MAE sensitive to individual ratings. However, the workflow still demonstrates the main logic of a personalized recommender system: training on observed ratings, predicting unseen or held-out ratings, and ranking recommendations for each user.
+
+# Disconnect Database
+
+```{r disconnect-db}
+dbDisconnect(con)
+```
+
+# Conclusion
+
+In this assignment, I implemented a personalized movie recommender system using item-to-item collaborative filtering. The recommender calculated movie similarity from user rating patterns, predicted ratings for held-out user-movie pairs, evaluated performance using RMSE and MAE, and generated ranked Top-3 movie recommendations for each user.
+
+Overall, this assignment extends the earlier non-personalized Global Baseline Estimate by producing recommendations that depend on individual user preferences. The final results show both prediction performance and personalized recommendation output, while the visualizations provide additional support for interpreting the dataset, the model evaluation, and the recommendation rankings.
+
