@@ -1,0 +1,123 @@
+---
+title: "Assignment 11 Approach: Personalized Recommender System"
+author: "Muhammad Suffyan Khan"
+format: html
+editor: visual
+date: "04/23/2026"
+---
+
+## Objective
+
+The objective of this assignment is to build a personalized movie recommendation system using the same survey rating data from the previous Global Baseline Estimate assignment. In the previous assignment, the recommender produced non-personalized recommendations based on overall movie rating patterns. In this assignment, the goal is to generate recommendations that are personalized for each user based on their individual rating history.
+
+This assignment will focus on implementing a personalized recommender system, defining the recommendation output, evaluating model performance, and explaining how the model was built and tested.
+
+## Dataset Description
+
+The dataset used for this assignment is the same movie rating survey dataset used in the previous recommender assignment. The data is stored in a PostgreSQL database using three relational tables:
+
+- `users`
+- `movies`
+- `ratings`
+
+The `users` table contains the survey participants, the `movies` table contains the movie titles and release years, and the `ratings` table stores each user's rating for selected movies.
+
+The rating values are on a 1 to 5 scale, where higher values represent stronger user preference. Missing ratings represent movies that a user has not rated. These unrated movies are the candidates for personalized recommendations.
+
+## Selected Recommendation Algorithm
+
+For this assignment, I will implement an item-to-item collaborative filtering recommender system.
+
+Item-to-item collaborative filtering recommends items by calculating similarity between items based on user rating patterns. In this case, the items are movies. If a user rated one movie highly, the recommender can use similarities between that movie and other movies to estimate which unseen movies the user may also like.
+
+This method was selected because it is personalized, interpretable, and appropriate for a small movie rating dataset. It also provides a clear improvement over the previous global baseline approach because recommendations depend on each user's individual rating behavior rather than only the overall average rating of each movie.
+
+## Recommendation Output
+
+The recommender system will output a ranked Top-3 list of personalized movie recommendations for each user.
+
+Each recommendation will include:
+
+- User name
+- Recommended movie title
+- Predicted rating
+- Recommendation rank
+
+The recommendations will only include movies that the user has not already rated. This makes the output realistic because the recommender is suggesting new movies rather than repeating movies already seen or rated by the user.
+
+## Planned Workflow
+
+The planned workflow for this assignment is:
+
+1. Load the required R libraries.
+2. Connect to the PostgreSQL database.
+3. Import the `users`, `movies`, and `ratings` tables into R.
+4. Validate the ratings data and confirm that ratings are on a 1 to 5 scale.
+5. Join the relational tables into one analysis-ready dataset.
+6. Split the observed ratings into training and testing sets.
+7. Convert the training ratings into a user-movie rating matrix.
+8. Calculate item-to-item similarity between movies using rating patterns.
+9. Predict ratings for held-out user-movie pairs.
+10. Evaluate recommender performance using RMSE and MAE.
+11. Generate Top-3 personalized movie recommendations for each user.
+12. Interpret the results and discuss limitations of the small survey dataset.
+
+## Model Building Plan
+
+The model will be built using the training portion of the rating data. First, the ratings will be reshaped into a user-item matrix where rows represent users and columns represent movies. Each cell will contain the user's rating for a movie.
+
+Next, movie-to-movie similarity will be calculated based on available user ratings. The recommender will then estimate a user's rating for an unseen movie by using a weighted average of the user's ratings for similar movies.
+
+The general idea is:
+
+- If a user liked movies similar to an unseen movie, the unseen movie should receive a higher predicted rating.
+- If a user gave lower ratings to similar movies, the unseen movie should receive a lower predicted rating.
+
+## Evaluation Plan
+
+The recommender will be evaluated using a hold-out validation approach.
+
+The observed ratings will be divided into:
+
+- Training data
+- Testing data
+
+The model will be trained using the training data only. Then, it will predict ratings for the user-movie pairs in the testing data. These predicted ratings will be compared to the actual held-out ratings.
+
+The evaluation metrics will be:
+
+- Root Mean Squared Error (RMSE)
+- Mean Absolute Error (MAE)
+
+RMSE measures the average prediction error while giving larger errors more weight. MAE measures the average absolute difference between predicted and actual ratings. Together, these metrics provide a clear way to evaluate how close the recommender's predictions are to the actual user ratings.
+
+## Expected Analysis
+
+The analysis will show whether the personalized recommender can generate reasonable user-specific recommendations from the survey data. The final output will include both the evaluation results and the Top-3 recommendations for each user.
+
+The results will also be compared conceptually to the previous global baseline recommender. The global baseline approach recommends based on overall popularity or average rating, while the personalized recommender adjusts recommendations based on the target user's own rating history.
+
+## Anticipated Challenges
+
+The main challenge is that the survey dataset is small and sparse. Since there are only a limited number of users, movies, and ratings, some movie pairs may not have enough overlapping ratings to calculate strong similarity scores.
+
+Because of this, the recommender will be treated as a small-scale demonstration of personalized recommendation logic rather than a production-level recommendation system. Any missing or unavailable predictions will be handled carefully, and the limitations will be explained in the final discussion.
+
+## Visualization Plan
+
+To support the analysis and improve interpretability of the recommender system, a small set of visualizations will be included in the codebase.
+
+These visualizations will include:
+
+- A rating distribution plot to understand how users rated movies across the dataset.
+- A predicted vs actual rating plot to evaluate the performance of the recommender system on the test data.
+- A bar chart of Top-3 recommendations for selected users to visually illustrate the personalized recommendation output.
+
+These visualizations are not the primary focus of the assignment but are included to enhance the clarity of the results and provide additional insight into model behavior.
+
+
+## Conclusion
+
+This approach will extend the previous Global Baseline Estimate assignment by moving from non-personalized recommendations to personalized recommendations. By using item-to-item collaborative filtering, the recommender will generate ranked movie suggestions for each user based on their own rating behavior and similarities between movies.
+
+The final submission will include the code, recommendation output, evaluation results, and a brief explanation of how the personalized recommender was built and evaluated.
